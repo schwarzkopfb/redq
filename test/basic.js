@@ -28,7 +28,7 @@ queue.listen(function () {
 
 var i = 0
 var interval = setInterval(function () {
-    queue.push({ test: i++ })
+    queue.add({ test: i++ })
 }, 50)
 
 process.on('SIGINT', function () {

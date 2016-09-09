@@ -110,7 +110,7 @@ RedisQueue.prototype.listen = function listen(callback) {
     })
 }
 
-RedisQueue.prototype.push = function push(data, callback) {
+RedisQueue.prototype.add = function add(data, callback) {
     if (this.closing)
         return
     else if (this.closed)

@@ -19,7 +19,7 @@ queue.listen()
 
 var i = 0
 var interval = setInterval(function () {
-    queue.push({ test: i++ }, function (err, id) {
+    queue.add({ test: i++ }, function (err, id) {
         if (err)
             throw err
         else
