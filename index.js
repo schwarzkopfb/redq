@@ -110,18 +110,6 @@ RedisQueue.prototype.listen = function listen(callback) {
     })
 }
 
-RedisQueue.prototype.close = function close(callback) {
-    if (this.closing || this.closed)
-        return
-
-    if (callback)
-        this.on('close', callback)
-
-    this.closing = true
-    this.sub.unsubscribe(this.key())
-    this.onend()
-}
-
 RedisQueue.prototype.push = function push(data, callback) {
     var iid = id(),
         key = this.key()
@@ -135,6 +123,39 @@ RedisQueue.prototype.push = function push(data, callback) {
             if (callback)
                 callback(err, id)
         })
+}
+
+RedisQueue.prototype.close = function close(callback) {
+    if (this.closing)
+        return
+    else if (this.closed)
+        throw new Error('queue (' + this.name + ') already closed')
+
+    if (callback)
+        this.on('close', callback)
+
+    this.closing = true
+    this.sub.unsubscribe(this.key())
+}
+
+RedisQueue.prototype.end = function end(flush, callback) {
+    if (this.closing)
+        return
+    else if (this.closed)
+        throw new Error('queue (' + this.name + ') already closed')
+
+    assert(
+        flush === true || flush === false,
+        '`flush` parameter must be explicitly set'
+    )
+
+    this.closed = true
+    this.pub.end(flush)
+    this.sub.end(flush)
+
+    // `end()` closes the connection immediately
+    if (callback)
+        process.nextTick(callback)
 }
 
 RedisQueue.prototype.process = function processItems() {

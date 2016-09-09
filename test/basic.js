@@ -13,15 +13,18 @@ var Queue = require('../'),
 
 queue.on('item', function (id, data, done) {
     console.log('item:', id, data)
+    var err = new Error('fake')
     setTimeout(function () {
         if (Math.random() > .5)
-            done(new Error('fake'))
+            done(err)
         else
             done()
     }, 10)
 })
 
-queue.listen()
+queue.listen(function () {
+    console.log('listening')
+})
 
 var i = 0
 var interval = setInterval(function () {
@@ -29,6 +32,9 @@ var interval = setInterval(function () {
 }, 50)
 
 process.on('SIGINT', function () {
+    console.log()
     clearInterval(interval)
-    queue.close()
+    queue.close(function () {
+        console.log('closed')
+    })
 })
