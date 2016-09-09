@@ -111,6 +111,11 @@ RedisQueue.prototype.listen = function listen(callback) {
 }
 
 RedisQueue.prototype.push = function push(data, callback) {
+    if (this.closing)
+        return
+    else if (this.closed)
+        throw new Error('queue (' + this.name + ') already closed')
+
     var iid = id(),
         key = this.key()
 
@@ -119,6 +124,22 @@ RedisQueue.prototype.push = function push(data, callback) {
         .hmset(this.key(iid), data)
         .rpush(key, iid)
         .publish(key, iid)
+        .exec(function (err) {
+            if (callback)
+                callback(err, iid)
+        })
+}
+
+RedisQueue.prototype.remove = function remove(id, callback) {
+    if (this.closing)
+        return
+    else if (this.closed)
+        throw new Error('queue (' + this.name + ') already closed')
+
+    this.pub
+        .multi()
+        .lrem(this.key(), 0, id)
+        .del(this.key(id))
         .exec(function (err) {
             if (callback)
                 callback(err, id)
@@ -136,9 +157,10 @@ RedisQueue.prototype.close = function close(callback) {
 
     this.closing = true
     this.sub.unsubscribe(this.key())
+    this.exit()
 }
 
-RedisQueue.prototype.end = function end(flush, callback) {
+RedisQueue.prototype.end = function end(flush) {
     if (this.closing)
         return
     else if (this.closed)
@@ -152,10 +174,6 @@ RedisQueue.prototype.end = function end(flush, callback) {
     this.closed = true
     this.pub.end(flush)
     this.sub.end(flush)
-
-    // `end()` closes the connection immediately
-    if (callback)
-        process.nextTick(callback)
 }
 
 RedisQueue.prototype.process = function processItems() {
@@ -163,7 +181,7 @@ RedisQueue.prototype.process = function processItems() {
         return
 
     var i = this.concurrency - this.pending
-    while (--i > 0)
+    while (i-- > 0)
         this.fetch()
 }
 
@@ -184,7 +202,7 @@ RedisQueue.prototype.fetch = function fetch() {
                     self.onerror(err)
                     self.enqueue(id)
                 }
-                else {
+                else if (data) {
                     // todo: timeout
                     self.emit('item', id, data, once(function done(err) {
                         if (err)
@@ -193,6 +211,14 @@ RedisQueue.prototype.fetch = function fetch() {
                             self.pub.del(key, self.done.bind(self))
                     }))
                 }
+                /* note:
+                 * since we're not fetching queue items atomically,
+                 * - by design - it's possible that the item spcified
+                 * by the current `id` got removed in the meantime, but
+                 * then we can safely ignore it
+                 */
+                else
+                    self.done()
             })
         }
         else
@@ -206,14 +232,17 @@ RedisQueue.prototype.done = function done(err) {
 
     this.pending--
 
-    if (this.closing) {
-        if (!this.pending) {
-            this.pub.quit()
-            this.sub.quit()
-        }
-    }
+    if (this.closing)
+        this.exit()
     else
         this.process()
+}
+
+RedisQueue.prototype.exit = function exit() {
+    if (!this.pending) {
+        this.pub.quit()
+        this.sub.quit()
+    }
 }
 
 RedisQueue.prototype.enqueue = function enqueue(id) {

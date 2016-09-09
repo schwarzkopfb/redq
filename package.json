@@ -1,6 +1,6 @@
 {
   "name": "redq",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Queue implementation on top of Redis",
   "main": "index.js",
   "scripts": {
