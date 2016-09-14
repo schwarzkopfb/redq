@@ -262,8 +262,8 @@ RedisQueue.prototype._fetch = function fetch() {
                             self.pub.del(key + ':' + id, self.ondone.bind(self))
                     }))
                 }
-                else
-                    self.pending--
+                else if (--self.pending === 0)
+                    self.emit('idle')
             })
         }
     })

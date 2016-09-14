@@ -1,0 +1,56 @@
+#!/usr/bin/env node
+
+'use strict'
+
+var opts = {
+    db: 11,
+    host: process.env.REDIS_HOST,
+    port: process.env.REDIS_PORT,
+    password: process.env.REDIS_PASSWORD
+}
+
+var redis  = require('redis'),
+    client = redis.createClient(opts),
+    argv   = process.argv
+
+if (arg('--reset'))
+    client.keys('*', (err, keys) => {
+        if (keys.length)
+            client.del(keys, done)
+        else
+            done()
+    })
+else if (arg('--queue-items'))
+    client.lrange('rq:test', 0, -1, done)
+else if (arg('--queue-size'))
+    client.llen('rq:' + argv[ 2 ], done)
+else if (arg('--key-count'))
+    client.dbsize(done)
+else if (arg('--keys'))
+    client.keys('*', done)
+else {
+    console.log(
+        '\n' +
+        'usage: bin/debug [<queue>] <args>\n' +
+        '\n' +
+        '  --queue-items\tlist enqueued item ids\n' +
+        '  --queue-size\tcount enqueued items\n' +
+        '  --key-count\tcount keys in the database\n' +
+        '  --keys\tlist keys in the database\n' +
+        '  --reset\tremove all keys from the database\n'
+    )
+    done()
+}
+
+function arg(arg) {
+    return ~argv.indexOf(arg)
+}
+
+function done(err, res) {
+    if (err)
+        console.error(err.stack)
+    else if (res)
+        console.log(res)
+
+    client.unref()
+}

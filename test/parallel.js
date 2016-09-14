@@ -29,7 +29,7 @@ var i = 0
 var interval = setInterval(function () {
     queue1.add({ i: i++ })
     queue2.add({ i: i++ })
-}, 1)
+}, 10)
 
 process.on('SIGINT', function () {
     clearInterval(interval)
