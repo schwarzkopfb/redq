@@ -2,7 +2,9 @@
 
 module.exports = RedisQueue
 
-var assert       = require('assert'),
+var fs           = require('fs'),
+    join         = require('path').join,
+    assert       = require('assert'),
     inherits     = require('util').inherits,
     EventEmitter = require('events').EventEmitter,
     id           = require('mdbid'),
@@ -82,6 +84,17 @@ function mergeOptions(opts) {
     return merged
 }
 
+function parseReply(arr) {
+    var id  = arr.shift(),
+        len = arr.length,
+        res = {}
+
+    for (var i = 0; i < len; i += 2)
+        res[ arr[ i ] ] = arr[ i + 1 ]
+
+    return [ id, res ]
+}
+
 RedisQueue.prototype.key = function createKey(postfix) {
     var key = this.prefix + this.name
 
@@ -102,11 +115,11 @@ RedisQueue.prototype.listen = function listen(callback) {
     if (callback)
         this.on('listening', callback)
 
-    this.sub.on('message', this.process.bind(this))
+    this.sub.on('message', this._process.bind(this))
     this.sub.subscribe(this.key(), function () {
         self.listening = true
         self.emit('listening')
-        self.process()
+        self._process()
     })
 }
 
@@ -157,7 +170,7 @@ RedisQueue.prototype.close = function close(callback) {
 
     this.closing = true
     this.sub.unsubscribe(this.key())
-    this.exit()
+    this._exit()
 }
 
 RedisQueue.prototype.end = function end(flush) {
@@ -171,78 +184,11 @@ RedisQueue.prototype.end = function end(flush) {
         '`flush` parameter must be explicitly set'
     )
 
-    this.closed = true
+    this.closed    = true
+    this.closing   = false
+    this.listening = false
     this.pub.end(flush)
     this.sub.end(flush)
-}
-
-RedisQueue.prototype.process = function processItems() {
-    if (!this.listening || this.closing || this.closed)
-        return
-
-    var i = this.concurrency - this.pending
-    while (i-- > 0)
-        this.fetch()
-}
-
-RedisQueue.prototype.fetch = function fetch() {
-    var self = this
-
-    this.pending++
-    this.pub.lpop(this.key(), function (err, id) {
-        if (err) {
-            self.onerror(err)
-            self.enqueue(id)
-        }
-        else if (id) {
-            var key = self.key(id)
-
-            self.pub.hgetall(key, function (err, data) {
-                if (err) {
-                    self.onerror(err)
-                    self.enqueue(id)
-                }
-                else if (data) {
-                    // todo: timeout
-                    self.emit('item', id, data, once(function done(err) {
-                        if (err)
-                            self.enqueue(id)
-                        else
-                            self.pub.del(key, self.done.bind(self))
-                    }))
-                }
-                /* note:
-                 * since we're not fetching queue items atomically,
-                 * - by design - it's possible that the item spcified
-                 * by the current `id` got removed in the meantime, but
-                 * then we can safely ignore it
-                 */
-                else
-                    self.done()
-            })
-        }
-        else
-            self.done()
-    })
-}
-
-RedisQueue.prototype.done = function done(err) {
-    if (this.closed)
-        return
-
-    this.pending--
-
-    if (this.closing)
-        this.exit()
-    else
-        this.process()
-}
-
-RedisQueue.prototype.exit = function exit() {
-    if (!this.pending) {
-        this.pub.quit()
-        this.sub.quit()
-    }
 }
 
 RedisQueue.prototype.enqueue = function enqueue(id) {
@@ -252,7 +198,94 @@ RedisQueue.prototype.enqueue = function enqueue(id) {
         .multi()
         .rpush(key, id)
         .publish(key, id)
-        .exec(this.done.bind(this))
+        .exec(this.ondone.bind(this))
+}
+
+RedisQueue.prototype._process = function processItems() {
+    if (!this.listening || this.closing || this.closed)
+        return
+
+    var i = this.concurrency - this.pending
+    while (i-- > 0)
+        this._fetch()
+}
+
+RedisQueue.prototype._getFetchScriptSha = function getFetchScriptSha(cb) {
+    var sha = this._fetchScriptSha
+
+    if (sha) {
+        cb(null, sha)
+        return
+    }
+
+    var self   = this,
+        client = this.pub
+
+    fs.readFile(join(__dirname, 'fetch.lua'), { encoding: 'utf8' }, function (err, src) {
+        if (err)
+            cb(err)
+        else
+            client.script('load', src, function (err, sha) {
+                if (err)
+                    cb(err)
+                else {
+                    self._fetchScriptSha = sha
+                    cb(null, sha)
+                }
+            })
+    })
+}
+
+RedisQueue.prototype._fetch = function fetch() {
+    var self = this
+
+    this.pending++
+    this._getFetchScriptSha(function (err, sha) {
+        if (err)
+            self.onerror(err)
+        else {
+            var key = self.key()
+
+            self.pub.evalsha(sha, 1, key, function (err, arr) {
+                if (err)
+                    self.onerror(err)
+                else if (arr) {
+                    arr = parseReply(arr)
+
+                    var id   = arr[ 0 ],
+                        data = arr[ 1 ]
+
+                    self.emit('item', id, data, once(function done(err) {
+                        if (err)
+                            self.enqueue(id)
+                        else
+                            self.pub.del(key + ':' + id, self.ondone.bind(self))
+                    }))
+                }
+                else
+                    self.pending--
+            })
+        }
+    })
+}
+
+RedisQueue.prototype._exit = function exit() {
+    if (!this.pending) {
+        this.pub.quit()
+        this.sub.quit()
+    }
+}
+
+RedisQueue.prototype.ondone = function done(err) {
+    if (this.closed)
+        return
+
+    this.pending--
+
+    if (this.closing)
+        this._exit()
+    else
+        this._process()
 }
 
 RedisQueue.prototype.onerror = function onerror(err) {
@@ -264,7 +297,9 @@ RedisQueue.prototype.onend = function onerror(err) {
         return
 
     if (!this.pub.connected && !this.sub.connected) {
-        this.closed = true
+        this.closed    = true
+        this.closing   = false
+        this.listening = false
         this.emit('close')
     }
 }

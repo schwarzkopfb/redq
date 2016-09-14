@@ -24,11 +24,12 @@ function onitem(id, data, done) {
 queue1.on('item', onitem).listen()
 queue2.on('item', onitem).listen()
 
+console.time('elapsed')
 var i = 0
 var interval = setInterval(function () {
     queue1.add({ i: i++ })
     queue2.add({ i: i++ })
-}, 10)
+}, 1)
 
 process.on('SIGINT', function () {
     clearInterval(interval)
@@ -54,10 +55,10 @@ function isUnique(arr) {
 var closed
 function onclose() {
     if (closed) {
-        console.log(ids)
-        console.log(counts)
-        console.log(isUnique(ids))
-        console.log(isUnique(counts))
+        console.log('ids are unique:', isUnique(ids))
+        console.log('counts are unique:', isUnique(counts))
+        console.log('processed:', ids.length)
+        console.timeEnd('elapsed')
     }
     else
         closed = true
