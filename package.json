@@ -1,8 +1,12 @@
 {
   "name": "redq",
   "version": "0.4.0",
-  "description": "Redis backed queue implementation",
+  "description": "Scalable FIFO queue implementation backed by Redis",
   "main": "index.js",
+  "files": [
+      "index.js",
+      "fetch.lua"
+  ],
   "scripts": {
     "test": "tap test/*.js"
   },
@@ -12,7 +16,8 @@
   },
   "keywords": [
     "redis",
-    "queue"
+    "queue",
+    "fifo"
   ],
   "author": "Schwarzkopf Balázs <schwarzkopfb@icloud.com>",
   "license": "MIT",

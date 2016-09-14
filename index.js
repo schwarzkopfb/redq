@@ -246,7 +246,7 @@ RedisQueue.prototype._fetch = function fetch() {
         else {
             var key = self.key()
 
-            self.pub.evalsha(sha, 1, key, function (err, arr) {
+            self.pub.evalsha(sha, 2, key, Date.now(), function (err, arr) {
                 if (err)
                     self.onerror(err)
                 else if (arr) {
@@ -259,7 +259,11 @@ RedisQueue.prototype._fetch = function fetch() {
                         if (err)
                             self.enqueue(id)
                         else
-                            self.pub.del(key + ':' + id, self.ondone.bind(self))
+                            self.pub
+                                .multi()
+                                .del(key + ':' + id, self.ondone.bind(self))
+                                .zrem(key + ':active', id)
+                                .exec()
                     }))
                 }
                 else if (--self.pending === 0)

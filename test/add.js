@@ -7,9 +7,15 @@ var opts = {
 }
 
 var Queue = require('../'),
-    queue = new Queue('test', opts)
+    queue = new Queue('test', opts),
+    pending = 100000
 
-for (var i = 10; i--;)
-    queue.add({ test: 'test', other: 'test', 'another-test': 'test' })
+for (var i = pending; i--;)
+    queue.add({ test: 'test', other: 'test', 'another-test': 'test' }, done)
 
-queue.close()
+function done(err) {
+    if (err)
+        throw err
+
+    --pending || queue.close()
+}

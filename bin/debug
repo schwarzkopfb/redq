@@ -3,7 +3,7 @@
 'use strict'
 
 var opts = {
-    db: 11,
+    db: process.env.REDIS_DB,
     host: process.env.REDIS_HOST,
     port: process.env.REDIS_PORT,
     password: process.env.REDIS_PASSWORD
@@ -13,13 +13,13 @@ var redis  = require('redis'),
     client = redis.createClient(opts),
     argv   = process.argv
 
+if (isNaN(opts.db))
+    throw new Error('database number must be explicitly specified with `REDIS_DB` env var')
+
+client.select(opts.db)
+
 if (arg('--reset'))
-    client.keys('*', (err, keys) => {
-        if (keys.length)
-            client.del(keys, done)
-        else
-            done()
-    })
+    client.flushdb(done)
 else if (arg('--queue-items'))
     client.lrange('rq:test', 0, -1, done)
 else if (arg('--queue-size'))
@@ -49,7 +49,7 @@ function arg(arg) {
 function done(err, res) {
     if (err)
         console.error(err.stack)
-    else if (res)
+    else if (res !== undefined)
         console.log(res)
 
     client.unref()
