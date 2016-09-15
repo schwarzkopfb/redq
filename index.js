@@ -116,7 +116,12 @@ RedisQueue.prototype.listen = function listen(callback) {
         this.on('listening', callback)
 
     this.sub.on('message', this._process.bind(this))
-    this.sub.subscribe(this.key(), function () {
+    this.sub.subscribe(this.key(), function (err) {
+        if (err) {
+            self.onerror(err)
+            return
+        }
+
         self.listening = true
         self.emit('listening')
         self._process()
@@ -129,8 +134,9 @@ RedisQueue.prototype.add = function add(data, callback) {
     else if (this.closed)
         throw new Error('queue (' + this.name + ') already closed')
 
-    var iid = id(),
-        key = this.key()
+    var self = this,
+        iid  = id(),
+        key  = this.key()
 
     this.pub
         .multi()
@@ -140,6 +146,8 @@ RedisQueue.prototype.add = function add(data, callback) {
         .exec(function (err) {
             if (callback)
                 callback(err, iid)
+            else if (err)
+                self.onerror(err)
         })
 }
 
@@ -149,6 +157,8 @@ RedisQueue.prototype.remove = function remove(id, callback) {
     else if (this.closed)
         throw new Error('queue (' + this.name + ') already closed')
 
+    var self = this
+
     this.pub
         .multi()
         .lrem(this.key(), 0, id)
@@ -156,6 +166,8 @@ RedisQueue.prototype.remove = function remove(id, callback) {
         .exec(function (err) {
             if (callback)
                 callback(err, id)
+            else if (err)
+                self.onerror(err)
         })
 }
 
@@ -280,9 +292,13 @@ RedisQueue.prototype._exit = function exit() {
     }
 }
 
-RedisQueue.prototype.ondone = function done(err) {
+RedisQueue.prototype.ondone = function ondone(err) {
     if (this.closed)
         return
+    else if (err) {
+        self.onerror(err)
+        return
+    }
 
     this.pending--
 
@@ -296,9 +312,13 @@ RedisQueue.prototype.onerror = function onerror(err) {
     this.emit('error', err)
 }
 
-RedisQueue.prototype.onend = function onerror(err) {
+RedisQueue.prototype.onend = function onend(err) {
     if (this.closed)
         return
+    else if (err) {
+        self.onerror(err)
+        return
+    }
 
     if (!this.pub.connected && !this.sub.connected) {
         this.closed    = true
