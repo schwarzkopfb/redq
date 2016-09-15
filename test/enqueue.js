@@ -3,13 +3,13 @@
 var test  = require('tap'),
     queue = require('./queue')(),
     count = 3,
+    ended = 0,
     err   = new Error('test'),
     sent
 
 test.plan(3)
 
 queue.on('item', onitem)
-     .on('idle', onidle)
      .add({ test: 42 }, onadd)
 
 function onadd(err, id) {
@@ -22,14 +22,14 @@ function onadd(err, id) {
 }
 
 function onitem(id, data, done) {
+    ended++
+    
     if (count-->0) {
         test.equal(id, sent, 'item should be enqueued again')
         done(err)
     }
-    else
+    else if (ended < 3)
         done()
-}
-
-function onidle() {
-    queue.close()
+    else
+        queue.close()
 }
