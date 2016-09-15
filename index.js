@@ -26,8 +26,13 @@ function RedisQueue(name, options) {
 
     EventEmitter.call(this)
 
-    if (options.client instanceof redis.RedisClient)
+    if (options && 'client' in options) {
+        assert(
+            options.client instanceof redis.RedisClient,
+            'client must be a `RedisClient` instance'
+        )
         var client = options.client
+    }
     else
         client = redis.createClient(options)
 
@@ -53,6 +58,8 @@ function RedisQueue(name, options) {
 
 inherits(RedisQueue, EventEmitter)
 
+RedisQueue.Queue = RedisQueue
+
 function assertOptions(opts) {
     if (!opts)
         return
@@ -65,6 +72,9 @@ function assertOptions(opts) {
 }
 
 function mergeOptions(opts) {
+    if (!opts)
+        opts = {}
+
     var merged = {}
 
     Object.keys(defaultOptions).forEach(function (key) {
@@ -85,6 +95,12 @@ function parseReply(arr) {
     return [ id, res ]
 }
 
+function emit(queue, event, arg) {
+    process.nextTick(function () {
+        queue.emit(event, arg)
+    })
+}
+
 RedisQueue.prototype.key = function createKey(postfix) {
     var key = this.prefix + this.name
 
@@ -96,16 +112,16 @@ RedisQueue.prototype.key = function createKey(postfix) {
 
 RedisQueue.prototype.listen = function listen(callback) {
     if (this.listening)
-        return
-    else if (this.closed)
-        throw new Error('queue (' + this.name + ') already closed')
+        return this
+
+    assert(!this.closing && !this.closed, 'queue is already closed')
 
     var self = this
 
     if (callback)
         this.on('listening', callback)
 
-    this.sub.on('message', this._process.bind(this))
+    this.sub.on('message', this.process.bind(this))
     this.sub.subscribe(this.key(), function (err) {
         if (err) {
             self.onerror(err)
@@ -113,16 +129,15 @@ RedisQueue.prototype.listen = function listen(callback) {
         }
 
         self.listening = true
-        self.emit('listening')
-        self._process()
+        emit(self, 'listening')
+        self.process()
     })
+
+    return this
 }
 
 RedisQueue.prototype.add = function add(data, callback) {
-    if (this.closing)
-        return
-    else if (this.closed)
-        throw new Error('queue (' + this.name + ') already closed')
+    assert(!this.closing && !this.closed, 'queue is already closed')
 
     var self = this,
         iid  = id(),
@@ -139,13 +154,12 @@ RedisQueue.prototype.add = function add(data, callback) {
             else if (err)
                 self.onerror(err)
         })
+
+    return this
 }
 
 RedisQueue.prototype.remove = function remove(id, callback) {
-    if (this.closing)
-        return
-    else if (this.closed)
-        throw new Error('queue (' + this.name + ') already closed')
+    assert(!this.closing && !this.closed, 'queue is already closed')
 
     var self = this
 
@@ -159,13 +173,12 @@ RedisQueue.prototype.remove = function remove(id, callback) {
             else if (err)
                 self.onerror(err)
         })
+
+    return this
 }
 
 RedisQueue.prototype.close = function close(callback) {
-    if (this.closing)
-        return
-    else if (this.closed)
-        throw new Error('queue (' + this.name + ') already closed')
+    assert(!this.closing && !this.closed, 'queue is already closed')
 
     if (callback)
         this.on('close', callback)
@@ -175,25 +188,9 @@ RedisQueue.prototype.close = function close(callback) {
     this._exit()
 }
 
-RedisQueue.prototype.end = function end(flush) {
-    if (this.closing)
-        return
-    else if (this.closed)
-        throw new Error('queue (' + this.name + ') already closed')
-
-    assert(
-        flush === true || flush === false,
-        '`flush` parameter must be explicitly set'
-    )
-
-    this.closed    = true
-    this.closing   = false
-    this.listening = false
-    this.pub.end(flush)
-    this.sub.end(flush)
-}
-
 RedisQueue.prototype.enqueue = function enqueue(id) {
+    assert(!this.closing && !this.closed, 'queue is already closed')
+
     var key = this.key()
 
     this.pub
@@ -203,12 +200,11 @@ RedisQueue.prototype.enqueue = function enqueue(id) {
         .exec(this.ondone.bind(this))
 }
 
-RedisQueue.prototype._process = function processItems() {
-    if (!this.listening || this.closing || this.closed)
-        return
+RedisQueue.prototype.process = function processItems() {
+    assert(!this.closing && !this.closed, 'queue is already closed')
 
     var i = this.concurrency - this.pending
-    while (i-- > 0)
+    while (i-->0)
         this._fetch()
 }
 
@@ -216,7 +212,7 @@ RedisQueue.prototype._getFetchScriptSha = function getFetchScriptSha(cb) {
     var sha = this._fetchScriptSha
 
     if (sha) {
-        cb(null, sha)
+        cb(sha)
         return
     }
 
@@ -225,53 +221,56 @@ RedisQueue.prototype._getFetchScriptSha = function getFetchScriptSha(cb) {
 
     fs.readFile(join(__dirname, 'fetch.lua'), { encoding: 'utf8' }, function (err, src) {
         if (err)
-            cb(err)
+            self.onerror(err)
         else
             client.script('load', src, function (err, sha) {
                 if (err)
-                    cb(err)
+                    self.onerror(err)
                 else {
                     self._fetchScriptSha = sha
-                    cb(null, sha)
+                    cb(sha)
                 }
             })
     })
 }
 
 RedisQueue.prototype._fetch = function fetch() {
-    var self = this
+    var self = this,
+        key  = this.key()
 
     this.pending++
-    this._getFetchScriptSha(function (err, sha) {
-        if (err)
-            self.onerror(err)
-        else {
-            var key = self.key()
+    this._getFetchScriptSha(function (sha) {
+        self.pub.evalsha(sha, 2, key, Date.now(), function (err, arr) {
+            if (err) {
+                self.pending--
+                self.onerror(err)
+            }
+            else if (arr) {
+                arr = parseReply(arr)
 
-            self.pub.evalsha(sha, 2, key, Date.now(), function (err, arr) {
-                if (err)
-                    self.onerror(err)
-                else if (arr) {
-                    arr = parseReply(arr)
+                var id   = arr[ 0 ],
+                    data = arr[ 1 ]
 
-                    var id   = arr[ 0 ],
-                        data = arr[ 1 ]
+                self.emit('item', id, data, once(function done(err) {
+                    if (err) {
+                        self.pending--
+                        self.enqueue(id)
+                    }
+                    else
+                        self.pub
+                            .multi()
+                            .del(key + ':' + id)
+                            .zrem(key + ':active', id)
+                            .exec(self.ondone.bind(self))
+                }))
+            }
+            else if (--self.pending === 0) {
+                self.emit('idle')
 
-                    self.emit('item', id, data, once(function done(err) {
-                        if (err)
-                            self.enqueue(id)
-                        else
-                            self.pub
-                                .multi()
-                                .del(key + ':' + id, self.ondone.bind(self))
-                                .zrem(key + ':active', id)
-                                .exec()
-                    }))
-                }
-                else if (--self.pending === 0)
-                    self.emit('idle')
-            })
-        }
+                if (self.closing)
+                    self._exit()
+            }
+        })
     })
 }
 
@@ -283,9 +282,7 @@ RedisQueue.prototype._exit = function exit() {
 }
 
 RedisQueue.prototype.ondone = function ondone(err) {
-    if (this.closed)
-        return
-    else if (err) {
+    if (err) {
         self.onerror(err)
         return
     }
@@ -295,17 +292,15 @@ RedisQueue.prototype.ondone = function ondone(err) {
     if (this.closing)
         this._exit()
     else
-        this._process()
+        this.process()
 }
 
 RedisQueue.prototype.onerror = function onerror(err) {
-    this.emit('error', err)
+    emit(this, 'error', err)
 }
 
 RedisQueue.prototype.onend = function onend(err) {
-    if (this.closed)
-        return
-    else if (err) {
+    if (err) {
         self.onerror(err)
         return
     }
@@ -314,6 +309,6 @@ RedisQueue.prototype.onend = function onend(err) {
         this.closed    = true
         this.closing   = false
         this.listening = false
-        this.emit('close')
+        emit(this, 'close')
     }
 }

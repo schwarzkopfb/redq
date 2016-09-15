@@ -2,21 +2,9 @@
 
 'use strict'
 
-var opts = {
-    db: process.env.REDIS_DB,
-    host: process.env.REDIS_HOST,
-    port: process.env.REDIS_PORT,
-    password: process.env.REDIS_PASSWORD
-}
-
 var redis  = require('redis'),
-    client = redis.createClient(opts),
+    client = redis.createClient(require('../test/credentials')),
     argv   = process.argv
-
-if (isNaN(opts.db))
-    throw new Error('database number must be explicitly specified with `REDIS_DB` env var')
-
-client.select(opts.db)
 
 if (arg('--reset'))
     client.flushdb(done)

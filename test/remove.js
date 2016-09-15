@@ -1,41 +1,33 @@
 'use strict'
 
-var opts = {
-    db: 11,
-    host: process.env.REDIS_HOST,
-    port: process.env.REDIS_PORT,
-    password: process.env.REDIS_PASSWORD
+var test  = require('tap'),
+    queue = require('./queue')()
+
+test.plan(1)
+
+function handleError(fn) {
+    return function (err) {
+        if (err) {
+            test.threw(err)
+
+            if (!queue.closed)
+                queue.close()
+        }
+        else
+            fn.apply(null, Array.prototype.slice.call(arguments, 1))
+    }
 }
 
-var Queue = require('../'),
-    queue = new Queue('test', opts)
-
 queue.on('item', function (id, data, done) {
-    console.log('item:', id, data)
+    test.equal(data.n, '2', 'first item should be removed')
     done()
+    queue.close()
 })
 
-queue.listen()
-
-var i = 0
-var interval = setInterval(function () {
-    queue.add({ test: i++ }, function (err, id) {
-        if (err)
-            throw err
-        else
-            queue.remove(id, function (err) {
-                if (err)
-                    throw err
-                else
-                    console.log('added and removed:', id)
-            })
-    })
-}, 100)
-
-process.on('SIGINT', function () {
-    console.log()
-    clearInterval(interval)
-    queue.close(function () {
-        console.log('closed')
-    })
-})
+queue.add({ n: 1 }, handleError(function (id) {
+    queue.add({ n: 2 }, handleError(function () {
+        queue.remove(id, handleError(function () {
+            queue.listen()
+        }))
+    }))
+}))
