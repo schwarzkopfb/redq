@@ -12,9 +12,7 @@ var fs           = require('fs'),
     redis        = require('redis')
 
 var defaultOptions = {
-    ttl: Infinity,
     prefix: 'rq:',
-    timeout: Infinity,
     concurrency: 1
 }
 
@@ -39,9 +37,7 @@ function RedisQueue(name, options) {
     this.sub     = client.duplicate()
 
     var opts = mergeOptions(options)
-    this.ttl         = opts.ttl
     this.prefix      = opts.prefix
-    this.timeout     = opts.timeout
     this.concurrency = opts.concurrency
 
     var onerror = this.onerror.bind(this),
@@ -61,14 +57,8 @@ function assertOptions(opts) {
     if (!opts)
         return
 
-    if ('ttl' in opts)
-        assert(opts.ttl > 0, '`options.ttl` must be greater than zero')
-
     if ('prefix' in opts)
         assert.equal(typeof opts.prefix, 'string', '`options.prefix` must be a string')
-
-    if ('timeout' in opts)
-        assert(opts.timeout > 0, '`options.timeout` must be greater than zero')
 
     if ('concurrency' in opts)
         assert(opts.concurrency > 0, '`opts.concurrency` must be greater than zero')
